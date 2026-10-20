@@ -11,6 +11,10 @@ name: publish
 #     Organization or user: dingchenhui0618-arch
 #     Repository:           dsh-poker-night
 #     Workflow filename:    publish.yml
+#
+# The project has no runtime dependencies and is built/tested with npm, so this
+# workflow deliberately does not touch pnpm (the repo keeps a pnpm lockfile for
+# the DSH plugin workflow, and `pnpm store path` trips over it on a bare runner).
 on:
   push:
     tags:
@@ -26,18 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
-          cache: pnpm
-      # --no-frozen-lockfile on purpose: the lockfile is not regenerated for
-      # metadata-only changes, and a stale lock must not block a release.
-      - run: pnpm install --no-frozen-lockfile
-      - run: pnpm test
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install --no-audit --no-fund
+      - run: npm test
       # A release can also be published from a maintainer machine (the first one
       # has to be: Trusted Publishing can only be configured once the package
       # exists). The tag push then arrives with the version already on npm, so

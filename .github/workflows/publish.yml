@@ -39,6 +39,10 @@ jobs:
           # using the OIDC trusted-publisher identity.
       - run: npm install --no-audit --no-fund
       - run: npm test
+      # Trusted publishing needs npm >= 11.5.1 (the runner's bundled npm is 10.x
+      # and reports ENEEDAUTH instead of exchanging the OIDC token).
+      - run: npm install -g npm@11
+      - run: npm --version
       # A release can also be published from a maintainer machine (the first one
       # has to be: Trusted Publishing can only be configured once the package
       # exists). The tag push then arrives with the version already on npm, so

@@ -1,6 +1,6 @@
 {
   "name": "dsh-poker-night",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "No-Limit Hold'em night table for DeepSeek Harness: one human, LLM founders, and LAN friends.",
   "type": "module",
   "main": "lib/index.js",

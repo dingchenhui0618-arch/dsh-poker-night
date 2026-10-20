@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-20
+
+### 内部
+- 发布走 npm Trusted Publishing（OIDC）：推 `v*` tag 由 GitHub Actions 发版，凭据不落地；包本身没有功能变化。
+- CI 改用 npm 安装依赖与跑测试（原 workflow 用 pnpm，裸 runner 上报 `packages field missing or empty` 直接失败）；并加了一步「该版本已在 npm 上就跳过发布」，重推 tag 不会把流水线弄红。
+
 ## [0.6.0] - 2026-10-20
 
 ### 新增
@@ -99,7 +105,8 @@
 
 - 首次发布：六人无限注德州扑克插件，host 引擎 + client Tab。0.1.1 至 0.1.3 为发布当天的打包修补。
 
-[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bubbleptr/dsh-holdem/compare/v0.3.0...v0.4.0

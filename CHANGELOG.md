@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
 ### 新增
 - 局域网昵称：主机开房时可填牌桌名（同时作为自己的昵称），加入方填自己的昵称，两边都能就地改名；留空则随机生成（如「沉着的河马」）。生成与规整（去控制字符、去首尾标点、按码点截 12 字）放在 `src/names.js`。
 - 主机开房支持自定义 6 位房间号与端口（留空随机生成 / 默认 47811）；面板列出已入座的远程玩家，以及他们顶替的原角色。
@@ -97,7 +99,8 @@
 
 - 首次发布：六人无限注德州扑克插件，host 引擎 + client Tab。0.1.1 至 0.1.3 为发布当天的打包修补。
 
-[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bubbleptr/dsh-holdem/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bubbleptr/dsh-holdem/releases/tag/v0.3.0

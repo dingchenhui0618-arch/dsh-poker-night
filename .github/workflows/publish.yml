@@ -38,4 +38,19 @@ jobs:
       # metadata-only changes, and a stale lock must not block a release.
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm test
-      - run: npm publish --provenance --access public
+      # A release can also be published from a maintainer machine (the first one
+      # has to be: Trusted Publishing can only be configured once the package
+      # exists). The tag push then arrives with the version already on npm, so
+      # skip instead of failing the workflow on "cannot publish over".
+      - name: Is this version already on npm?
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "dsh-poker-night@$version" version >/dev/null 2>&1; then
+            echo "dsh-poker-night@$version is already published, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.skip != 'true'
+        run: npm publish --provenance --access public

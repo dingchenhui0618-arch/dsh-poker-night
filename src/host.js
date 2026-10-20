@@ -19,6 +19,7 @@ import {
   remoteLeave,
   remoteState,
 } from './lan.js'
+import { normalizeNickname, randomNickname } from './names.js'
 
 const START_STACK = 2000000
 const SB = 10000
@@ -254,6 +255,10 @@ export function createTable(ctx, options) {
     const hero = players[viewerSeat] || players[0]
     const legal = legalFor(state.toAct == null ? null : players[state.toAct])
     return {
+      // `you` is the seat this snapshot speaks for: the host plays seat 0, a LAN
+      // guest gets the seat it took over. The browser uses it to decide whose
+      // action buttons to show instead of assuming seat 0.
+      you: viewerSeat,
       status: state.status,
       handNo: state.handNo,
       street: state.street,
@@ -994,25 +999,43 @@ export function createTable(ctx, options) {
       .map(function (p) { return p.seat })
   }
 
-  function claimSeat(seat) {
+  function claimSeat(seat, nickname) {
     const p = players[seat]
     if (!p || p.seat === 0 || p.kind === 'guest') return false
+    // Remember the character this guest replaced so releaseSeat can put the
+    // original bot back exactly as it was (display name and sponsor tag).
+    p.botName = p.name
+    p.botTag = p.tag
+    p.name = normalizeNickname(nickname, p.name)
+    p.tag = '远程'
     p.kind = 'guest'
     p.remote = true
     // A request for this seat may already be in flight. Its completion guard
     // (`p.kind !== 'ai'`) drops the answer, so the seat waits for its remote
     // player instead of betting by itself — nothing else needs cancelling.
     if (state.toAct === seat) state.thinkEndsAt = 0
-    return true
+    return p.botName
   }
 
   function releaseSeat(seat) {
     const p = players[seat]
     if (!p || p.seat === 0 || p.kind !== 'guest') return false
+    if (typeof p.botName === 'string' && p.botName) p.name = p.botName
+    if (typeof p.botTag === 'string') p.tag = p.botTag
+    delete p.botName
+    delete p.botTag
     p.kind = 'ai'
     p.remote = false
     if (state.status === 'playing' && state.toAct === seat) scheduleAi()
     return true
+  }
+
+  // Renames the local human (seat 0). The host's nickname doubles as the room
+  // name, so it is normalized the same way; empty input leaves the old name.
+  function setNickname(name) {
+    const next = normalizeNickname(name)
+    if (next && players[0]) players[0].name = next
+    return snapshot()
   }
 
   function status() {
@@ -1048,6 +1071,7 @@ export function createTable(ctx, options) {
     availableSeats: availableSeats,
     claimSeat: claimSeat,
     releaseSeat: releaseSeat,
+    setNickname: setNickname,
     status: status,
     handNo: handNo,
   }
@@ -1426,12 +1450,46 @@ export function apply(ctx) {
     return st
   }
 
+  // Peer rows are the same whether the socket belongs to a host announcing its
+  // room or to a joiner that only listens for tables around it.
+  function watchPeers(st) {
+    return function (info, rinfo) {
+      const host = (rinfo && rinfo.address) || ''
+      st.peers = st.peers.filter(function (p) { return !(p.host === host && p.port === info.port) })
+      st.peers.push({
+        name: info.name,
+        host: host,
+        port: info.port,
+        players: info.players,
+        status: info.status,
+        seenAt: Date.now(),
+      })
+    }
+  }
+
+  // Host lobby lines and the guest's own seat all use the same row shape. The
+  // client prefers `roster` when present and falls back to `guests`.
+  function lanRoster(room) {
+    const rows = room && Array.isArray(room.roster) ? room.roster : []
+    return rows.map(function (g) {
+      return {
+        seat: g.seat,
+        seatLabel: g.seatLabel || ('座位 ' + (g.seat + 1)),
+        name: g.name || '',
+        character: g.character || '',
+      }
+    })
+  }
+
   function lanView(st) {
     const now = Date.now()
     st.peers = prunePeers(st.peers, now)
     const room = st.room ? st.room.info() : null
+    const roster = lanRoster(room)
+    const proxy = st.proxy
     return {
       enabled: !!room,
+      name: room && room.name ? room.name : '',
       code: room ? room.code : '',
       port: room ? room.port : 0,
       discovery: st.discovery ? (st.discovery.bound ? 'udp' : 'degraded') : '',
@@ -1439,15 +1497,30 @@ export function apply(ctx) {
       peers: st.peers.map(function (p) {
         return { name: p.name, host: p.host, port: p.port, players: p.players, status: p.status }
       }),
-      joined: st.proxy
-        ? { host: st.proxy.host, port: st.proxy.port, seat: st.proxy.seat, name: st.proxy.name }
+      roster: roster,
+      guests: roster.map(function (g) { return Object.assign({}, g) }),
+      joined: proxy
+        ? {
+            host: proxy.host,
+            port: proxy.port,
+            seat: proxy.seat,
+            seatLabel: proxy.seatLabel || ('座位 ' + (proxy.seat + 1)),
+            character: proxy.character || '',
+            nickname: proxy.nickname || '',
+            table: proxy.table || '',
+          }
         : null,
       error: st.error || (st.proxy ? st.proxy.error : '') || '',
     }
   }
 
   function withLan(session, snap) {
-    return Object.assign({}, snap, { lan: lanView(lanFor(session)) })
+    const st = lanFor(session)
+    // Every response the browser can see carries `you` — plain snapshots, LAN
+    // POST replies and the polled GET alike — so the client never has to guess
+    // which seat is its own.
+    const you = st.proxy && Number.isInteger(st.proxy.seat) ? st.proxy.seat : 0
+    return Object.assign({}, snap, { you: you, lan: lanView(st) })
   }
 
   // While this session plays on a remote room its local table is parked, so the
@@ -1483,11 +1556,22 @@ export function apply(ctx) {
 
   async function lanEnable(st, session, args) {
     if (st.room) return
-    const code = makeRoomCode()
-    const wanted = Number(args && args.port) > 0 ? Number(args.port) : DEFAULT_ROOM_PORT
+    const name = normalizeNickname(args && args.name) || randomNickname()
+    let code
+    if (args && args.code != null && String(args.code).trim() !== '') {
+      code = normalizeRoomCode(args.code)
+      if (!code) throw new HttpError(400, '房间号需要 6 位数字')
+    } else {
+      code = makeRoomCode()
+    }
+    const rawPort = args && args.port
+    const parsedPort = rawPort == null || rawPort === '' ? NaN : Number(rawPort)
+    const wanted = Number.isInteger(parsedPort) && parsedPort >= 0 && parsedPort <= 65535
+      ? parsedPort
+      : DEFAULT_ROOM_PORT
     const room = createRoom({
       table: session.table,
-      name: (args && typeof args.name === 'string' && args.name) || '牌桌',
+      name: name,
       code: code,
       port: wanted,
     })
@@ -1498,34 +1582,54 @@ export function apply(ctx) {
       return
     }
     st.room = room
+    // The host's own seat uses the room name too, so guests see one identity
+    // for both the table and its owner.
+    session.table.setNickname(name)
+    // A joiner that scanned for tables already owns a listening socket. Reuse
+    // it (only its self-id changes now that we have a room) instead of opening
+    // a second socket on the same discovery port.
+    let discovery = st.discovery
+    if (discovery && !discovery.bound) {
+      st.discovery = null
+      await discovery.close()
+      discovery = null
+    }
+    if (discovery) {
+      discovery.setSelfId(room.info().id)
+    } else {
+      discovery = createDiscovery({
+        // Our own broadcasts come back on the loopback address; the room id
+        // keeps them out of the peer list without exposing the room code.
+        selfId: room.info().id,
+        onPeer: watchPeers(st),
+      })
+      st.discovery = discovery
+    }
     st.addresses = localAddresses()
-    const discovery = createDiscovery({
-      // Our own broadcasts come back on the loopback address; the room id keeps
-      // them out of the peer list without exposing the room code.
-      selfId: room.info().id,
-      onPeer: function (info, rinfo) {
-        const host = (rinfo && rinfo.address) || ''
-        st.peers = st.peers.filter(function (p) { return !(p.host === host && p.port === info.port) })
-        st.peers.push({
-          name: info.name,
-          host: host,
-          port: info.port,
-          players: info.players,
-          status: info.status,
-          seenAt: Date.now(),
-        })
-      },
-    })
-    st.discovery = discovery
     // Binding the fixed discovery port fails when a second instance runs on the
-    // same machine; announcing still works, discovery is just degraded.
-    await discovery.bind()
+    // same machine; announcing still works, discovery is just degraded. A
+    // reused socket from an earlier scan is already bound.
+    if (!discovery.bound) await discovery.bind()
     const announce = function () {
       if (!st.room || !st.discovery) return
       st.discovery.announce(st.room.info())
     }
     announce()
     st.timer = setInterval(announce, BROADCAST_INTERVAL_MS)
+  }
+
+  // A joiner needs the discovery socket as much as a host does: without it,
+  // someone who has not opened a room can never see the tables around them.
+  // Listening only — a scan must never announce an empty room or mint a code.
+  async function lanScan(st) {
+    if (st.discovery) {
+      if (st.room) st.discovery.announce(st.room.info())
+      return
+    }
+    st.addresses = localAddresses()
+    const discovery = createDiscovery({ selfId: '', onPeer: watchPeers(st) })
+    st.discovery = discovery
+    await discovery.bind()
   }
 
   async function lanJoin(st, args) {
@@ -1535,13 +1639,18 @@ export function apply(ctx) {
     if (!host || !Number.isInteger(port) || port <= 0 || !code) {
       throw new HttpError(400, '需要主机地址、端口和 6 位房间号')
     }
-    const joined = await remoteJoin(host, port, code, '远程玩家')
+    const nickname = normalizeNickname(args && args.name) || randomNickname()
+    const joined = await remoteJoin(host, port, code, nickname)
+    const seat = Number.isInteger(joined.seat) ? joined.seat : 0
     st.proxy = {
       host: host,
       port: port,
       ticket: joined.ticket,
-      seat: joined.seat,
-      name: (joined.room && joined.room.name) || '远程牌桌',
+      seat: seat,
+      seatLabel: joined.seatLabel || ('座位 ' + (seat + 1)),
+      character: joined.character || '',
+      nickname: joined.nickname || nickname,
+      table: (joined.room && joined.room.name) || '',
       snap: null,
       error: '',
     }
@@ -1552,8 +1661,22 @@ export function apply(ctx) {
         const res = await remoteState(proxy.host, proxy.port, proxy.ticket, 3000)
         proxy.snap = res.state
         proxy.seat = res.seat
+        if (res.nickname) proxy.nickname = res.nickname
+        if (res.character) proxy.character = res.character
         proxy.error = ''
       } catch (err) {
+        // A poll can land after the user already left; never resurrect the proxy.
+        if (st.proxy !== proxy) return
+        const status = err && err.status
+        if (status === 401 || status === 403) {
+          // The host no longer recognises this ticket: it restarted, turned LAN
+          // off, or the guest TTL expired. There is nothing left to rejoin, so
+          // drop back to the parked local table and tell the user once.
+          st.error = '与主机失去联系，已退回自己的牌桌'
+          st.proxy = null
+          await stopLan(st, false)
+          return
+        }
         proxy.error = '与主机失去联系：' + String((err && err.message) || err)
       }
     }
@@ -1568,10 +1691,13 @@ export function apply(ctx) {
     st.error = ''
     if (mode === 'enable') await lanEnable(st, session, args || {})
     else if (mode === 'disable') await stopLan(st, true)
-    else if (mode === 'scan') { if (st.room && st.discovery) st.discovery.announce(st.room.info()) }
+    else if (mode === 'scan') await lanScan(st)
     else if (mode === 'join') await lanJoin(st, args || {})
     else if (mode === 'leave') await stopLan(st, true)
-    else throw new HttpError(400, 'unknown lan mode')
+    else if (mode === 'rename') {
+      if (!st.room) throw new HttpError(400, '只有主机可以改名')
+      session.table.setNickname(String((args && args.name) || ''))
+    } else throw new HttpError(400, 'unknown lan mode')
     return viewFor(session)
   }
 

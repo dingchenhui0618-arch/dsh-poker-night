@@ -171,6 +171,8 @@ const CSS = require('./client-css.cjs')
 const { fmt, formatWinnerLines } = require('./format.js')
 const { seatPos, seatIsTop } = require('./seat-ring.js')
 const { raisePresets } = require('./bets.js')
+const { isMyTurn, seatIsMine, youSeat } = require('./table-view.js')
+const { normalizeNickname, randomNickname } = require('./names.js')
 const { paintIdenticon } = require('./identicon.js')
 
 const SUIT = { s: '♠', h: '♥', d: '♦', c: '♣' }
@@ -221,7 +223,7 @@ function PlayerMark(props) {
 
 function playerLabel(p) {
   if (!p) return ''
-  return p.id === 'hero' ? 'you' : (p.name || p.id)
+  return p.name || p.id || ''
 }
 
 function TimelineBody(props) {
@@ -464,7 +466,7 @@ function chipBadges(p, maxRebuys) {
   ]
 }
 
-function seatView(p, thinkLabel, isWinner, maxRebuys, seatCount) {
+function seatView(p, thinkLabel, isWinner, maxRebuys, seatCount, you) {
   const thinking = !!(p.isToAct && p.kind === 'ai')
   const statusText = thinking ? (thinkLabel || '思考中') : (p.talk || '')
   const top = seatIsTop(p.seat, seatCount)
@@ -472,6 +474,9 @@ function seatView(p, thinkLabel, isWinner, maxRebuys, seatCount) {
     h('div', { className: 'hk-avatar' }, h(PlayerMark, { player: p })),
     h('div', { className: 'hk-name' },
       h('span', {}, playerLabel(p)),
+      // Rendered on every seat and revealed by CSS only for the seat this
+      // browser plays, so the table always shows where "you" are sitting.
+      h('span', { className: 'hk-seat-tag' }, '我'),
       p.isDealer ? h('span', { className: 'hk-d', title: '庄家' }, '庄')
         : p.isBb ? h('span', { className: 'hk-d hk-bb', title: '大盲' }, '大')
         : p.isSb ? h('span', { className: 'hk-d hk-sb', title: '小盲' }, '小')
@@ -488,7 +493,7 @@ function seatView(p, thinkLabel, isWinner, maxRebuys, seatCount) {
   const status = h('div', { className: 'hk-status' + (statusText ? (thinking ? '' : ' talk') : ' off') }, statusText || 'idle')
   return h('div', {
     key: p.id,
-    className: 'hk-seat s' + p.seat + (top ? ' top' : '') + (p.isToAct ? ' toact' : '') + (p.folded ? ' folded' : '') + (isWinner ? ' winner' : ''),
+    className: 'hk-seat s' + p.seat + (p.seat === you ? ' me' : '') + (top ? ' top' : '') + (p.isToAct ? ' toact' : '') + (p.folded ? ' folded' : '') + (isWinner ? ' winner' : ''),
     style: seatPos(p.seat, seatCount),
   },
     h('div', { className: 'hk-badge' }, holePair(p), pill, below),
@@ -582,7 +587,13 @@ function Table(props) {
   const idle = state.status === 'idle'
   const over = state.status === 'hand-over'
   const ended = state.status === 'game-over'
-  const myTurn = state.status === 'playing' && state.toAct === 0
+  // A LAN guest plays a seat that is not seat 0: the host names it in every
+  // snapshot, so the action bar follows that seat instead of seat 0 (which is
+  // why a joined player used to have no buttons).
+  const you = youSeat(state)
+  const lan = state.lan || null
+  const joined = !!(lan && lan.joined)
+  const myTurn = isMyTurn(state)
   const board = state.board || []
   const boardSlots = [0, 1, 2, 3, 4].map(function (i) { return board[i] || null })
   const dealer = (state.players || []).find(function (p) { return p.isDealer })
@@ -602,8 +613,10 @@ function Table(props) {
     thinkLabel = '思考中 · ' + left + '秒'
   }
 
-  const startBtn = h('button', { className: 'hk-chipbtn go', disabled: busy, onClick: onStart }, 'Start')
-  const resetBtn = h('button', { className: 'hk-chipbtn', onClick: onReset }, 'Reset')
+  // Dealing and resetting belong to the host; a guest asking for them would be
+  // answered with a 409, so the controls are simply not offered.
+  const startBtn = joined ? null : h('button', { className: 'hk-chipbtn go', disabled: busy, onClick: onStart }, 'Start')
+  const resetBtn = joined ? null : h('button', { className: 'hk-chipbtn', onClick: onReset }, 'Reset')
 
   // The raise panel and the action row are shared by the full table and the
   // compact mini layout, so they are built once here.
@@ -628,13 +641,19 @@ function Table(props) {
       )
     : null
 
-  const dock = idle ? null : h('div', { className: 'hk-dock' },
+  const dock = idle
+    ? (joined
+        ? h('div', { className: 'hk-dock' }, h('div', { className: 'hk-wait' }, '等待主机开始对局'))
+        : null)
+    : h('div', { className: 'hk-dock' },
     ended
-      ? h('div', { className: 'hk-wait' }, '本局结束 · 点 Reset 再开一桌')
+      ? h('div', { className: 'hk-wait' }, joined ? '本局结束 · 等待主机再开一桌' : '本局结束 · 点 Reset 再开一桌')
       : over
-      ? h('div', { className: 'hk-actions' },
-          h('button', { className: 'hk-btn hk-go', disabled: busy, onClick: onNext }, '下一手'),
-        )
+      ? (joined
+          ? h('div', { className: 'hk-wait' }, '本手结束 · 等待主机发下一手')
+          : h('div', { className: 'hk-actions' },
+              h('button', { className: 'hk-btn hk-go', disabled: busy, onClick: onNext }, '下一手'),
+            ))
       : myTurn
         ? [
             raisePanel,
@@ -661,7 +680,7 @@ function Table(props) {
   // other. It gets its own vertical layout instead — board/pot on top, one
   // row per player, actions pinned at the bottom.
   if (compact) {
-    const hero = (state.players || []).find(function (p) { return p.seat === 0 })
+    const hero = (state.players || []).find(function (p) { return seatIsMine(p, state) })
     function playerRow(p) {
       const thinking = !!(p.isToAct && p.kind === 'ai')
       const status = thinking
@@ -671,11 +690,11 @@ function Table(props) {
       // The hero's own cards already sit in the header; everyone else shows them
       // once the host reveals them (showdown, or the winner of an uncontested
       // pot once the hand is over).
-      const opened = p.seat !== 0 && !p.folded && p.cards && p.cards.length === 2
+      const opened = !seatIsMine(p, state) && !p.folded && p.cards && p.cards.length === 2
       return h('div', {
         key: p.id,
         className: 'hk-c-row'
-          + (p.seat === 0 ? ' me' : '')
+          + (seatIsMine(p, state) ? ' me' : '')
           + (p.isToAct ? ' toact' : '')
           + (p.folded ? ' folded' : '')
           + (p.out ? ' out' : '')
@@ -779,7 +798,7 @@ function Table(props) {
               )
             : null,
         ),
-        (state.players || []).map(function (p) { return seatView(p, thinkLabel, !!winnerSeats[p.seat], state.maxRebuys, (state.players || []).length) }),
+        (state.players || []).map(function (p) { return seatView(p, thinkLabel, !!winnerSeats[p.seat], state.maxRebuys, (state.players || []).length, you) }),
       ),
       dock,
       ),
@@ -849,38 +868,112 @@ const MINI_MARGIN = 12
 const MINI_W = 360
 const MINI_H = 520
 // LAN mode sits behind one small button and is off by default: every part of
-// single-machine play works without it.
+// single-machine play works without it. Hosting and joining are separate
+// sections on purpose — joining someone else's table must not require opening a
+// room of your own first.
 function LanPane(props) {
   const lan = props.lan || {}
+  const players = props.players || []
   const [host, setHost] = React.useState('')
   const [code, setCode] = React.useState('')
+  const [nick, setNick] = React.useState(function () { return randomNickname() })
+  const [roomName, setRoomName] = React.useState('')
+  const [wantedCode, setWantedCode] = React.useState('')
+  const [port, setPort] = React.useState('')
+  const [hostNick, setHostNick] = React.useState('')
   const send = function (args) { if (!props.busy) props.onLan(args) }
   const rows = []
+  const peers = lan.peers || []
+  // The host sees who sits where; prefer the room's own roster when it has one.
+  const roster = (lan.roster && lan.roster.length ? lan.roster : lan.guests) || []
+  const addr = (lan.addresses || []).length ? lan.addresses[0].address : ''
+  const ownName = (players[0] && players[0].name) || ''
+
   if (lan.joined) {
-    rows.push(h('div', { key: 'j', className: 'hk-lan-line' },
-      '已加入 ' + lan.joined.host + ':' + lan.joined.port + ' · 你的座位 ' + (lan.joined.seat + 1)))
+    const j = lan.joined
+    rows.push(h('div', { key: 'card', className: 'hk-lan-card' },
+      h('div', { key: 'h', className: 'hk-lan-card-h' },
+        '你顶替了 ' + (j.character || '一名人机角色') + '（' + (j.seatLabel || ('座位 ' + (j.seat + 1))) + '）'),
+      h('div', { key: 's', className: 'hk-lan-line' },
+        '主机「' + (j.table || '远程牌桌') + '」· ' + j.host + ':' + j.port),
+      h('div', { key: 'n', className: 'hk-lan-line' }, '你的昵称：' + (j.nickname || '远程玩家')),
+    ))
+    rows.push(h('div', { key: 't', className: 'hk-lan-line' },
+      '轮到你时下方会出现 Fold / Check / Call / Bet；发牌与开新一手由主机控制。'))
     rows.push(h('div', { key: 'b', className: 'hk-lan-btns' },
-      h('button', { key: 'lv', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'leave' }) } }, '离开'),
+      h('button', { key: 'lv', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'leave' }) } }, '离开牌桌'),
     ))
   } else if (lan.enabled) {
+    rows.push(h('div', { key: 'sc', className: 'hk-lan-sec' }, '主机中'))
+    if (lan.name) rows.push(h('div', { key: 'nm', className: 'hk-lan-line' }, '牌桌「' + lan.name + '」'))
     rows.push(h('div', { key: 'c', className: 'hk-lan-code' }, lan.code))
-    rows.push(h('div', { key: 'h', className: 'hk-lan-line' }, '把房间号告诉同一网络里的人；他们在自己的插件里填你的地址和房间号即可加入'))
-    const addrs = (lan.addresses || []).map(function (a) { return a.address })
+    rows.push(h('div', { key: 'h', className: 'hk-lan-line' },
+      '把房间号告诉同一网络里的人，他们填你的地址和房间号就能加入'))
     rows.push(h('div', { key: 'a', className: 'hk-lan-line' },
-      '本机 ' + (addrs.length ? addrs[0] : '未找到地址') + ' · 端口 ' + lan.port))
-    const peers = lan.peers || []
-    rows.push(h('div', { key: 'p', className: 'hk-lan-line' }, peers.length
-      ? '发现 ' + peers.length + ' 张同网络牌桌，点一下填进地址：'
-      : (lan.discovery === 'udp' ? '正在搜索同网络的牌桌…' : '广播发现不可用，请手动填写对方地址')))
-    peers.forEach(function (peer, i) {
-      rows.push(h('div', {
-        key: 'peer' + i,
-        className: 'hk-lan-peer',
-        title: '点一下填进下面的地址栏',
-        onClick: function () { setHost(peer.host + ':' + peer.port) },
-      }, h('span', { className: 'hk-lan-peername' }, peer.name + ' · ' + peer.host + ':' + peer.port)))
-    })
+      (addr ? '本机 ' + addr : '未找到本机地址') + ' · 端口 ' + lan.port))
+    rows.push(h('div', { key: 'gs', className: 'hk-lan-sec' },
+      '已入座' + (roster.length ? ' · ' + roster.length + ' 位远程玩家' : '')))
+    if (roster.length) {
+      roster.forEach(function (g, i) {
+        rows.push(h('div', { key: 'r' + i, className: 'hk-lan-roster' },
+          h('span', { className: 'hk-lan-seat' }, g.seatLabel || ('座位 ' + (g.seat + 1))),
+          h('span', { className: 'hk-lan-roster-name' },
+            g.character ? (g.character + ' → ' + g.name) : g.name)))
+      })
+    } else {
+      rows.push(h('div', { key: 'gn', className: 'hk-lan-line' }, '还没有人加入。'))
+    }
+    if (peers.length) {
+      rows.push(h('div', { key: 'p', className: 'hk-lan-line' },
+        '同网络还有 ' + peers.length + ' 张牌桌：' + peers.map(function (p) { return p.name }).join('、')))
+    }
+    rows.push(h('div', { key: 'rn', className: 'hk-lan-form' },
+      h('input', {
+        key: 'rni',
+        className: 'hk-lan-input',
+        placeholder: '你的昵称',
+        title: '改的是你自己的显示名，不是牌桌名',
+        value: hostNick,
+        onChange: function (e) { setHostNick(e.target.value) },
+      }),
+      h('button', {
+        key: 'rnb',
+        type: 'button',
+        className: 'hk-chipbtn',
+        disabled: props.busy,
+        onClick: function () { send({ mode: 'rename', name: normalizeNickname(hostNick, ownName) }) },
+      }, '改名'),
+    ))
+    rows.push(h('div', { key: 'b', className: 'hk-lan-btns' },
+      h('button', { key: 'sc2', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'scan' }) } }, '重新搜索'),
+      h('button', { key: 'off', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'disable' }) } }, '关闭局域网'),
+    ))
+  } else {
+    rows.push(h('div', { key: 'jh', className: 'hk-lan-sec' }, '加入牌桌'))
+    rows.push(h('div', { key: 'j1', className: 'hk-lan-line' },
+      '同一网络里开着局域网的牌桌会出现在下面；加入后随机顶替一名人机角色，座位会标出来。'))
+    if (peers.length) {
+      peers.forEach(function (peer, i) {
+        rows.push(h('div', {
+          key: 'peer' + i,
+          className: 'hk-lan-peer',
+          title: '点一下填进下面的地址栏',
+          onClick: function () { setHost(peer.host + ':' + peer.port) },
+        }, h('span', { className: 'hk-lan-peername' }, peer.name + ' · ' + peer.host + ':' + peer.port)))
+      })
+    } else {
+      rows.push(h('div', { key: 'pn', className: 'hk-lan-line' },
+        lan.discovery === 'udp' ? '正在搜索同网络的牌桌…' : '点「搜索」找同网络的牌桌，或直接填对方地址'))
+    }
     rows.push(h('div', { key: 'f', className: 'hk-lan-form' },
+      h('input', {
+        key: 'nk',
+        className: 'hk-lan-input hk-lan-nick',
+        placeholder: '你的昵称',
+        title: '加入后显示在你的座位上',
+        value: nick,
+        onChange: function (e) { setNick(e.target.value) },
+      }),
       h('input', {
         key: 'ah',
         className: 'hk-lan-input',
@@ -890,38 +983,71 @@ function LanPane(props) {
       }),
       h('input', {
         key: 'ac',
-        className: 'hk-lan-input',
+        className: 'hk-lan-input hk-lan-code-input',
         placeholder: '6 位房间号',
         value: code,
         onChange: function (e) { setCode(e.target.value) },
       }),
+    ))
+    rows.push(h('div', { key: 'jb', className: 'hk-lan-btns' },
+      h('button', { key: 'srch', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'scan' }) } }, '搜索'),
       h('button', {
         key: 'aj',
         type: 'button',
-        className: 'hk-chipbtn',
+        className: 'hk-chipbtn go',
         disabled: props.busy,
         onClick: function () {
           const raw = String(host).trim()
           const at = raw.lastIndexOf(':')
           const target = at > 0 ? raw.slice(0, at) : raw
           const targetPort = at > 0 ? Number(raw.slice(at + 1)) : 47811
-          send({ mode: 'join', host: target, port: targetPort, code: code })
+          send({ mode: 'join', host: target, port: targetPort, code: code, name: normalizeNickname(nick, randomNickname()) })
         },
       }, '加入'),
     ))
-    rows.push(h('div', { key: 'b', className: 'hk-lan-btns' },
-      h('button', { key: 'sc', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'scan' }) } }, '重新搜索'),
-      h('button', { key: 'off', type: 'button', className: 'hk-chipbtn', disabled: props.busy, onClick: function () { send({ mode: 'disable' }) } }, '关闭局域网'),
+    rows.push(h('div', { key: 'hh', className: 'hk-lan-sec' }, '作为主机'))
+    rows.push(h('div', { key: 'h1', className: 'hk-lan-line' },
+      '也可以自己开一张牌桌：其他人填你的地址和房间号加入，你自己占 0 号位。'))
+    rows.push(h('div', { key: 'hf', className: 'hk-lan-form' },
+      h('input', {
+        key: 'rn2',
+        className: 'hk-lan-input',
+        placeholder: '牌桌名称（留空随机）',
+        value: roomName,
+        onChange: function (e) { setRoomName(e.target.value) },
+      }),
+      h('input', {
+        key: 'hc',
+        className: 'hk-lan-input hk-lan-code-input',
+        placeholder: '房间号（留空生成）',
+        value: wantedCode,
+        onChange: function (e) { setWantedCode(e.target.value) },
+      }),
+      h('input', {
+        key: 'hp',
+        className: 'hk-lan-input hk-lan-port',
+        placeholder: '端口 47811',
+        value: port,
+        onChange: function (e) { setPort(e.target.value) },
+      }),
     ))
-  } else {
-    rows.push(h('div', { key: 'i', className: 'hk-lan-line' }, '同一网络里的其他 dsh-poker-night 可以加入这张桌，随机顶替一名人机角色。默认关闭，单机玩法完全不受影响。'))
-    rows.push(h('button', {
-      key: 'on',
-      type: 'button',
-      className: 'hk-chipbtn go',
-      disabled: props.busy,
-      onClick: function () { send({ mode: 'enable' }) },
-    }, '开启局域网模式'))
+    rows.push(h('div', { key: 'hb', className: 'hk-lan-btns' },
+      h('button', {
+        key: 'on',
+        type: 'button',
+        className: 'hk-chipbtn go',
+        disabled: props.busy,
+        onClick: function () {
+          const args = { mode: 'enable', name: normalizeNickname(roomName, randomNickname()) }
+          const digits = String(wantedCode).replace(/[^0-9]/g, '')
+          if (digits) args.code = digits
+          const wantedPort = Number(String(port).replace(/[^0-9]/g, ''))
+          if (wantedPort > 0) args.port = wantedPort
+          send(args)
+        },
+      }, '开启局域网模式'),
+    ))
+    rows.push(h('div', { key: 'n', className: 'hk-lan-line' }, '局域网默认关闭，单机玩法完全不受影响。'))
   }
   if (lan.error) rows.push(h('div', { key: 'e', className: 'hk-err' }, lan.error))
   return h('div', { className: 'hk-lan' }, rows)
@@ -987,7 +1113,10 @@ function MiniWindow(props) {
   // A joined session plays on someone else's table; say so instead of leaving
   // the user wondering why the local table looks untouched.
   const lan = (state && state.lan) || null
-  const lanTag = lan && lan.joined ? ('局域网 · 座位 ' + (lan.joined.seat + 1)) : ''
+  const lanTag = lan && lan.joined
+    ? ('局域网 · ' + (lan.joined.seatLabel || ('座位 ' + (lan.joined.seat + 1)))
+        + (lan.joined.nickname ? ' · ' + lan.joined.nickname : ''))
+    : (lan && lan.enabled ? '主机 · ' + lan.code : '')
   const meta = (playing
     ? ('第 ' + state.handNo + ' 手 · ' + (STREET[state.street] || state.street))
     : '未开局') + (lanTag ? ' · ' + lanTag : '')
@@ -1099,7 +1228,12 @@ function MiniWindow(props) {
   } else if (pane === 'timeline') {
     body = h(TimelinePane, { items: (state && state.timeline) || [], players: (state && state.players) || [] })
   } else if (pane === 'lan') {
-    body = h(LanPane, { lan: (state && state.lan) || null, busy: snap.busy, onLan: actions.onLan })
+    body = h(LanPane, {
+      lan: (state && state.lan) || null,
+      players: (state && state.players) || [],
+      busy: snap.busy,
+      onLan: actions.onLan,
+    })
   } else {
     body = h(AvatarPane, Object.assign({
       players: (state && state.players) || [],

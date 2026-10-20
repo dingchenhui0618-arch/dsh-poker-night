@@ -55,21 +55,34 @@ module.exports = `
 .hk-lan-peer{display:flex;align-items:center;gap:6px;font-size:11.5px;padding:3px 6px;border:1px solid var(--hk-line,rgba(255,255,255,.16));border-radius:8px;cursor:pointer}
 .hk-lan-peer:hover{border-color:var(--hk-accent,#4c8dff)}
 .hk-lan-peername{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hk-lan-form{display:flex;gap:4px;align-items:center}
+.hk-lan-form{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .hk-lan-input{flex:1;min-width:0;background:transparent;border:1px solid var(--hk-line,rgba(255,255,255,.16));border-radius:8px;color:inherit;font:inherit;font-size:11px;padding:3px 6px}
-.hk-lan-btns{display:flex;gap:6px}
+.hk-lan-btns{display:flex;gap:6px;flex-wrap:wrap}
+.hk-lan-sec{margin-top:4px;font-size:11px;font-weight:700;letter-spacing:.02em;color:var(--hk-text-2,#c9ced8)}
+.hk-lan-sec:first-child{margin-top:0}
+.hk-lan-card{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border:1px solid var(--hk-accent-line,rgba(76,141,255,.45));border-radius:10px;background:var(--hk-accent-bg,rgba(76,141,255,.10))}
+.hk-lan-card-h{font-size:12.5px;font-weight:700;color:var(--hk-text,#e8ecf4);line-height:1.35}
+.hk-lan-roster{display:flex;align-items:center;gap:8px;font-size:11.5px;line-height:1.5}
+.hk-lan-seat{flex:none;min-width:44px;color:var(--hk-muted-fg,#8a8f98);font-variant-numeric:tabular-nums}
+.hk-lan-roster-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--hk-text-2,#c9ced8)}
+.hk-lan-nick{flex:0 1 88px}
+.hk-lan-code-input{flex:0 1 96px}
+.hk-lan-port{flex:0 1 78px}
 .hk-seat{position:absolute;width:168px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:2;overflow:visible}
 .hk-seat.folded{opacity:.4}
-.hk-seat.s0 .hk-status,.hk-seat.top .hk-status{position:absolute;left:50%;top:calc(100% + 8px);bottom:auto;transform:translateX(-50%)}
+.hk-seat.s0 .hk-status,.hk-seat.me .hk-status,.hk-seat.top .hk-status{position:absolute;left:50%;top:calc(100% + 8px);bottom:auto;transform:translateX(-50%)}
 .hk-badge{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;z-index:2}
 .hk-pill{position:relative;z-index:3}
 .hk-cards{position:absolute;left:50%;top:0;width:70px;height:52px;pointer-events:none;z-index:1;transform:translate(-50%,-80%)}
 .hk-cards .hk-card{position:absolute;top:0;width:38px;height:54px;padding:0}
 .hk-cards .hk-card.fan-l{left:0;transform:rotate(-16deg);transform-origin:50% 110%}
 .hk-cards .hk-card.fan-r{left:24px;transform:rotate(16deg);transform-origin:50% 110%}
-.hk-seat.s0 .hk-cards{width:86px;height:64px}
-.hk-seat.s0 .hk-cards .hk-card{width:48px;height:68px}
-.hk-seat.s0 .hk-cards .hk-card.fan-r{left:28px}
+.hk-seat.me .hk-pill{border-color:var(--hk-accent,#4c8dff);box-shadow:0 0 0 1px var(--hk-accent,#4c8dff) inset}
+.hk-seat.me .hk-seat-tag{display:inline-block}
+.hk-seat-tag{display:none;margin-left:5px;padding:0 5px;border-radius:999px;border:1px solid var(--hk-accent,#4c8dff);background:transparent;color:var(--hk-accent,#4c8dff);font-size:10px;font-weight:650;line-height:14px;vertical-align:1px}
+.hk-seat.s0 .hk-cards,.hk-seat.me .hk-cards{width:86px;height:64px}
+.hk-seat.s0 .hk-cards .hk-card,.hk-seat.me .hk-cards .hk-card{width:48px;height:68px}
+.hk-seat.s0 .hk-cards .hk-card.fan-r,.hk-seat.me .hk-cards .hk-card.fan-r{left:28px}
 .hk-card{width:64px;height:90px;border-radius:10px;background:var(--hk-card-bg);color:var(--hk-card-text);position:relative;padding:0;font-weight:750;border:1px solid var(--hk-card-line);font-size:18px;line-height:1;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:hidden}
 .hk-rank{position:absolute;top:4px;left:5px;font-size:13px;line-height:1;font-weight:750}
 .hk-suit{position:absolute;left:50%;top:56%;transform:translate(-50%,-50%);font-size:22px;line-height:1}

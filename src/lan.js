@@ -9,6 +9,7 @@ import dgram from 'node:dgram'
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
+import { normalizeNickname, randomNickname } from './names.js'
 
 export const LAN_VERSION = 1
 export const DISCOVERY_MAGIC = 'dsh-poker-night/lan'
@@ -152,6 +153,11 @@ export function createDiscovery(options) {
         socket.send(payload, 0, payload.length, target, '127.0.0.1', function () {})
       }
     },
+    // A socket first opened to listen (joiner scanning) can start hosting later;
+    // only the self-filter changes, so it is reused instead of rebound.
+    setSelfId(next) {
+      selfId = String(next || '')
+    },
     get bound() { return bound },
     get error() { return bindError },
     close() {
@@ -224,6 +230,24 @@ export function createRoom(options) {
     return guests
   }
 
+  // Who currently sits where. The host lobby and the joining machine both read
+  // this shape; `character` is the bot the guest replaced, when the table still
+  // remembers it.
+  function roster() {
+    activeGuests()
+    const rows = []
+    for (const guest of guests.values()) {
+      rows.push({
+        seat: guest.seat,
+        seatLabel: '座位 ' + (guest.seat + 1),
+        name: guest.name,
+        character: guest.character || '',
+      })
+    }
+    rows.sort(function (a, b) { return a.seat - b.seat })
+    return rows
+  }
+
   function info() {
     return {
       id: roomId,
@@ -235,6 +259,7 @@ export function createRoom(options) {
       status: table.status(),
       handNo: table.handNo(),
       guests: activeGuests().size,
+      roster: roster(),
     }
   }
 
@@ -257,17 +282,33 @@ export function createRoom(options) {
       err.status = 409
       throw err
     }
+    const nickname = normalizeNickname(args && args.name) || randomNickname(random)
+    // The table swaps the seat's bot for the guest and hands back the character
+    // it replaced, so the joiner can be told who it took over.
+    const character = table.claimSeat(seat, nickname)
+    if (character === false) {
+      const err = new Error('没有可以顶替的座位')
+      err.status = 409
+      throw err
+    }
     const ticket = randomBytes(24).toString('base64url')
     const guest = {
       ticket: ticket,
       seat: seat,
-      name: String((args && args.name) || '远程玩家').slice(0, 24),
+      name: nickname,
+      character: typeof character === 'string' ? character : '',
       lastSeen: now(),
       failures: ++failures,
     }
-    table.claimSeat(seat)
     guests.set(ticket, guest)
-    return { ticket: ticket, seat: seat, room: info() }
+    return {
+      ticket: ticket,
+      seat: seat,
+      seatLabel: '座位 ' + (seat + 1),
+      character: guest.character,
+      nickname: nickname,
+      room: info(),
+    }
   }
 
   function guestFor(req) {
@@ -307,7 +348,13 @@ export function createRoom(options) {
     if (req.method === 'GET' && path === '/lan/state') {
       const guest = guestFor(req)
       if (!guest) { sendJson(res, 401, { error: 'ticket required' }); return }
-      sendJson(res, 200, { seat: guest.seat, room: info(), state: table.snapshot(guest.seat) })
+      sendJson(res, 200, {
+        seat: guest.seat,
+        nickname: guest.name,
+        character: guest.character || '',
+        room: info(),
+        state: table.snapshot(guest.seat),
+      })
       return
     }
     if (req.method === 'POST' && path === '/lan/act') {

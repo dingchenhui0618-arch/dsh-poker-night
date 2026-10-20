@@ -39,9 +39,9 @@ jobs:
           # using the OIDC trusted-publisher identity.
       - run: npm install --no-audit --no-fund
       - run: npm test
-      # Trusted publishing needs npm >= 11.5.1 (the runner's bundled npm is 10.x
-      # and reports ENEEDAUTH instead of exchanging the OIDC token).
-      - run: npm install -g npm@11
+      # Staged publishing needs npm >= 11.15.0 for `npm stage`; the runner's
+      # bundled npm is 10.x, which also cannot exchange the OIDC token at all.
+      - run: npm install -g npm@11.15.0
       - run: npm --version
       # A release can also be published from a maintainer machine (the first one
       # has to be: Trusted Publishing can only be configured once the package
@@ -57,5 +57,9 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+      # The trusted-publisher connection is stage-only: a plain `npm publish` is
+      # rejected with "403 OIDC permission denied for this action". The staged
+      # version then waits for a maintainer to approve it (npm stage approve /
+      # the website), which is what keeps proof of human presence.
       - if: steps.version.outputs.skip != 'true'
-        run: npm publish --provenance --access public
+        run: npm stage publish --provenance --access public

@@ -99,7 +99,9 @@ pnpm test         # node:test 单测（test/*.test.mjs）：纯逻辑 + 离线�
 
 - 版本号遵循 semver 2.0.0，commit 遵循 Conventional Commits，两者对应：`fix:` → patch，`feat:` → minor，带 `BREAKING CHANGE` 或 `!` 的提交 → major（0.x 阶段升 minor）。
 - 每合并一个 PR 就发一版，不攒。发版前先把改动写进 `CHANGELOG.md` 的 Unreleased 段（Keep a Changelog 格式：不兼容变更 / 新增 / 修复 / 安全 / 内部），发版时把该段改成版本号和日期。
-- 发版命令：`npm version <patch|minor|major> -m "chore(release): v%s"` 自动改 package.json、提交并打 tag；然后 `git push --follow-tags`，再 `npm publish`（`prepack` 会自动 build）。tag 与 npm 版本必须一一对应。
+- 发版命令：`npm version <patch|minor|major> -m "chore(release): v%s"` 自动改 package.json、提交并打 tag；然后 `git push && git push --follow-tags`。tag 与 npm 版本必须一一对应。
+- **发版不要手动 `npm publish`**：推 `v*` tag 会触发 `.github/workflows/publish.yml`，用 npm Trusted Publishing（OIDC，凭据不落地）把版本**暂存**发布出去。npm 的暂存发布（staged publishing）要求 npm CLI ≥ 11.15.0，workflow 里已钉死；信任发布连接是 `npm stage publish` 权限，直接 `npm publish` 会被 `403 OIDC permission denied` 拒掉。暂存后由维护者批准（浏览器 2FA，这是 npm 刻意保留的「人在场」证明）：`npx -y npm@11.15.0 stage list` 拿 id，`npx -y npm@11.15.0 stage approve <id>`。自动化审查没跑完时批准会报 `E409 can't be approved yet`，等几分钟重试。
+- workflow 里**不能**给 `actions/setup-node` 加 `registry-url`：它会写一行空的 `_authToken=${NODE_AUTH_TOKEN}`，npm 带着空 bearer token 请求，发布直接 404，OIDC 身份根本用不上。打包产物带 SLSA provenance（`npm view <pkg>@<ver> dist.attestations` 可查）。
 - API 与游戏规则稳定后发 1.0.0，此后不兼容变更才升 major。
 
 ## 约定

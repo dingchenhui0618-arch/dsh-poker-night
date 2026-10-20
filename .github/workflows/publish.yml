@@ -33,7 +33,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: 'https://registry.npmjs.org'
+          # No registry-url and no NODE_AUTH_TOKEN on purpose: setup-node would
+          # write `_authToken=${NODE_AUTH_TOKEN}` into .npmrc, npm would send an
+          # empty bearer token, and the publish comes back as a 404 instead of
+          # using the OIDC trusted-publisher identity.
       - run: npm install --no-audit --no-fund
       - run: npm test
       # A release can also be published from a maintainer machine (the first one

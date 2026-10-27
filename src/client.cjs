@@ -566,6 +566,7 @@ function Table(props) {
   const onNext = props.onNext
   const onReset = props.onReset
   const onAct = props.onAct
+  const onDifficulty = props.onDifficulty
   const legal = (state && state.legal) || {}
   const minR = legal.minRaiseTo || 0
   const maxR = legal.maxRaiseTo || 0
@@ -617,6 +618,31 @@ function Table(props) {
   // answered with a 409, so the controls are simply not offered.
   const startBtn = joined ? null : h('button', { className: 'hk-chipbtn go', disabled: busy, onClick: onStart }, 'Start')
   const resetBtn = joined ? null : h('button', { className: 'hk-chipbtn', onClick: onReset }, 'Reset')
+
+  // Difficulty is a table setting, so a LAN guest sees the current level but
+  // cannot change the host's game.
+  const difficulty = state.difficulty || 'sharp'
+  const difficultyOptions = state.difficultyOptions || []
+  const diffLabel = (difficultyOptions.find(function (o) { return o.id === difficulty }) || {}).label || difficulty
+  const diffSeg = h('div', { className: 'hk-diff', title: 'AI 难度 · 重开后回到「老练」' },
+    difficultyOptions.map(function (o) {
+      return h('button', {
+        key: o.id,
+        className: 'hk-diff-opt' + (o.id === difficulty ? ' on' : ''),
+        disabled: busy || joined,
+        title: o.hint,
+        onClick: function () { if (onDifficulty) onDifficulty(o.id) },
+      }, o.label)
+    }),
+  )
+  // One-tap toggle for the mini window, where the segment does not fit.
+  const otherDiff = (difficultyOptions.find(function (o) { return o.id !== difficulty }) || {}).id || 'normal'
+  const diffChip = h('button', {
+    className: 'hk-chipbtn',
+    disabled: busy || joined,
+    title: '切换 AI 难度（当前「' + diffLabel + '」，重开后回到默认）',
+    onClick: function () { if (onDifficulty) onDifficulty(otherDiff) },
+  }, 'AI ' + diffLabel)
 
   // The raise panel and the action row are shared by the full table and the
   // compact mini layout, so they are built once here.
@@ -723,7 +749,7 @@ function Table(props) {
 
     return h('div', { className: rootClass, ref: setRootEl },
       h('div', { className: 'hk-c' },
-        h('div', { className: 'hk-c-top' }, idle ? startBtn : null, resetBtn),
+        h('div', { className: 'hk-c-top' }, idle ? startBtn : null, resetBtn, diffChip),
         ended
           ? h('div', { className: 'hk-c-over' },
               h('div', { className: 'hk-c-over-h' }, '本局结束'),
@@ -771,6 +797,7 @@ function Table(props) {
           : ('第 ' + state.handNo + ' 手 · ' + (STREET[state.street] || state.street) + (state.agentModel ? ' · ' + state.agentModel : '')),
       ),
       idle ? startBtn : null,
+      diffSeg,
       resetBtn,
     ),
     h('div', { className: 'hk-stage' },
@@ -842,6 +869,7 @@ function usePokerActions() {
       onNext: function () { store.call('next-hand', {}) },
       onReset: function () { store.call('reset', {}) },
       onAct: function (a) { store.call('act', a) },
+      onDifficulty: function (value) { store.call('difficulty', { value: value }) },
       onSetAvatar: uploadAvatar,
       onClearAvatar: function (id) { store.call('clear-avatar', { id: id }) },
       onLan: function (args) { store.call('lan', args) },

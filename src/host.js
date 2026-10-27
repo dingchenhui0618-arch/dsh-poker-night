@@ -20,6 +20,7 @@ import {
   remoteState,
 } from './lan.js'
 import { normalizeNickname, randomNickname } from './names.js'
+import { DEFAULT_DIFFICULTY, DIFFICULTIES, difficultyLabel, isDifficulty, normalChoice, sharpChoice } from './ai-difficulty.js'
 
 const START_STACK = 2000000
 const SB = 10000
@@ -36,7 +37,7 @@ const SESSION_HEADER = 'x-poker-night-session'
 // Query parameter carrying a session's media token for <img> avatar requests,
 // which cannot attach the session header.
 const MEDIA_PARAM = 't'
-const MUTATING_METHODS = ['start', 'act', 'next-hand', 'reset', 'set-avatar', 'clear-avatar', 'lan']
+const MUTATING_METHODS = ['start', 'act', 'next-hand', 'reset', 'set-avatar', 'clear-avatar', 'lan', 'difficulty']
 // How often a joined session asks the host for a fresh snapshot. The client
 // polls the local plugin (280ms open / 2000ms collapsed), so this only has to
 // stay a little ahead of the open case.
@@ -129,6 +130,9 @@ export function createTable(ctx, options) {
     timeline: [],
     tlSeq: 0,
     agentModel: '',
+    // "普通" is the shipped feel, "老练" prices the pot; every restart returns
+    // to the default so the stronger table is what you get out of the box.
+    difficulty: DEFAULT_DIFFICULTY,
     log: ['点击 Start 入座：你 + ' + BOTS.length + ' 位智能体。'],
   }
   const players = [createPlayer({ id: 'hero', name: 'you', emoji: '🧑', kind: 'human', tag: 'Hero' }, 0)]
@@ -277,6 +281,8 @@ export function createTable(ctx, options) {
       maxRebuys: MAX_REBUYS,
       thinkEndsAt: state.thinkEndsAt || 0,
       agentModel: state.agentModel || '',
+      difficulty: state.difficulty,
+      difficultyOptions: DIFFICULTIES.map(function (d) { return { id: d.id, label: d.label, hint: d.hint } }),
       log: state.log.slice(),
       timeline: (state.timeline || []).slice(),
       legal: legal,
@@ -553,41 +559,43 @@ export function createTable(ctx, options) {
     }
   }
 
-  function decideAiRaw(p) {
+  // Everything a choice function needs, computed once from the live table. Both
+  // difficulty levels read the same snapshot, so the only difference between
+  // "普通" and "老练" is the decision policy in ai-difficulty.js.
+  function aiState(p) {
     const toCall = Math.max(0, state.currentBet - p.bet)
-    const hs = strength(p.cards, state.board) + p.loose
     const potNow = pot()
-    const odds = toCall === 0 ? 0 : toCall / (potNow + toCall)
-    const roll = Math.random()
-    if (toCall === 0) {
-      if (hs > 0.62 && roll < p.agg) {
-        const size = Math.floor(potNow * (0.5 + p.agg * 0.4))
-        return { type: 'raise', amount: Math.max(BB, p.bet + size) }
-      }
-      if (hs > 0.5 && roll < p.bluff * 1.4) {
-        return { type: 'raise', amount: p.bet + Math.max(BB, Math.floor(potNow * 0.66)) }
-      }
-      return { type: 'check' }
+    return {
+      equity: strength(p.cards, state.board) + p.loose,
+      loose: p.loose,
+      bet: p.bet,
+      stack: p.stack,
+      agg: p.agg,
+      bluff: p.bluff,
+      toCall: toCall,
+      potNow: potNow,
+      odds: toCall === 0 ? 0 : toCall / (potNow + toCall),
+      currentBet: state.currentBet,
+      minRaise: state.minRaise,
+      bb: BB,
+      actors: live().filter(function (o) { return !o.allIn }).length,
+      roll: Math.random(),
     }
-    if (hs + 0.08 < odds && toCall > p.stack * 0.12 && roll > p.bluff) return { type: 'fold' }
-    if (hs > 0.7 && roll < p.agg) {
-      const size = Math.floor((potNow + toCall) * (0.6 + p.agg * 0.5))
-      return { type: 'raise', amount: state.currentBet + Math.max(state.minRaise, size) }
-    }
-    if (hs > 0.55 && roll < p.bluff + 0.15) {
-      return { type: 'raise', amount: state.currentBet + Math.max(state.minRaise, Math.floor((potNow + toCall) * 0.75)) }
-    }
-    if (toCall >= p.stack) return { type: 'call' }
-    if (hs + p.loose * 0.5 >= odds - 0.08) return { type: 'call' }
-    if (toCall <= BB && hs > 0.28) return { type: 'call' }
-    return { type: 'fold' }
+  }
+
+  function decideAiRaw(p) {
+    return normalChoice(aiState(p))
+  }
+
+  function decideAiSharp(p) {
+    return sharpChoice(aiState(p))
   }
 
   // The heuristic sizes raises as currentBet + size, which can overshoot the
   // stack; committed straight from the error path it bypasses normalizeChoice,
   // so an LLM failure used to shove by accident. Same clamp as the model path.
   function decideAi(p) {
-    const choice = decideAiRaw(p)
+    const choice = state.difficulty === 'sharp' ? decideAiSharp(p) : decideAiRaw(p)
     if (!choice || choice.type !== 'raise') return choice
     const legal = legalFor(p)
     if (!legal.raise) return { type: legal.check ? 'check' : 'call' }
@@ -652,6 +660,17 @@ export function createTable(ctx, options) {
         (o.lastAction ? ', last ' + o.lastAction : '')
     }).join('\n')
     const history = (state.actionLog || []).length ? (state.actionLog || []).join('\n') : '(no actions yet this hand)'
+    const toCall = Math.max(0, legal.callAmount || 0)
+    const potNow = Math.max(1, pot())
+    // The 老练 level prices the pot explicitly: the model gets the same
+    // break-even number a human would work out, instead of guessing from the
+    // raw bet size. The 普通 level keeps the original prompt untouched.
+    const oddsLine = state.difficulty === 'sharp'
+      ? (toCall > 0
+          ? '底池赔率（老练档）：跟注 ' + toCall + ' 进 ' + potNow + ' 的底池，需要约 ' +
+            Math.round(toCall / (potNow + toCall) * 100) + '% 的胜率才不亏。你的牌明显低于这个价格就弃牌，明显高于就跟。'
+          : '底池赔率（老练档）：还没人下注，你要在「价值下注」和「偶尔诈唬偷池」之间选。人少时可以多诈，多人底池要少诈。')
+      : null
     return [
       'Hand #' + state.handNo + ' · ' + state.street + ' · pot ' + pot() + ' tokens · current bet ' + state.currentBet,
       'Blinds ' + SB + '/' + BB + '. Your stack ' + p.stack + ' tokens (about ' +
@@ -661,8 +680,9 @@ export function createTable(ctx, options) {
       'Players:\n' + others,
       'Action so far:\n' + history,
       'Legal actions: ' + describeLegal(legal),
+      oddsLine,
       '选择一个合法动作。金额要和底池相称：除非你真的打算把全部筹码压上（那才选 allin），否则不要把 raise 的 amount 写成区间上界。talk 必须填写简体中文闲话，最多十六个字。可以虚张声势或故意说不准确的话，但禁止在 talk 里提到底牌、花色、点数、牌型、听牌或任何推理。',
-    ].join('\n\n')
+    ].filter(Boolean).join('\n\n')
   }
 
   function askAgent(p) {
@@ -687,6 +707,9 @@ export function createTable(ctx, options) {
       '用 holdem_act 做出一个合法动作。amount 是加注到的总额。',
       'talk 必须填写简体中文桌边闲话，最多十六个字，符合人设。',
       '你可以虚张声势，故意谎称自己的意图或信心，这些话不必符合真实牌力。',
+      state.difficulty === 'sharp'
+        ? '这一桌是「老练」档：每个决定都拿底池赔率和自己的胜率比一比，赔率不够就弃牌；没人下注时可以用诈唬偷池，但频率要低，人多的时候更少诈。'
+        : '这一桌是「普通」档：按牌力和直觉打，不用算得太细。',
       '绝对不要在 talk 里提到底牌、花色、点数、牌型、听牌、成牌、胜率或任何推理过程。',
     ].join('')
     const options = {
@@ -894,9 +917,26 @@ export function createTable(ctx, options) {
     scheduleAi()
   }
 
+  // Every new table re-seats the seven characters randomly: whoever sat to your
+  // left last round should not be there again. Seat 0 stays the human — LAN
+  // guests address their proxy seat through `you`, and a moving hero would make
+  // that contract ambiguous — so only seats 1..n are shuffled. Deliberately
+  // unseeded: a fixed order would replay the same table on every restart, which
+  // is exactly what this is meant to avoid.
+  function shuffleSeats() {
+    const seats = players.slice(1)
+    shuffle(seats)
+    for (let i = 0; i < seats.length; i++) {
+      seats[i].seat = i + 1
+      players[i + 1] = seats[i]
+    }
+  }
+
   function start() {
     state.handNo = 0
     state.gameOver = false
+    shuffleSeats()
+    state.difficulty = DEFAULT_DIFFICULTY
     state.dealer = Math.floor(Math.random() * players.length)
     for (let i = 0; i < players.length; i++) {
       players[i].stack = START_STACK
@@ -920,6 +960,10 @@ export function createTable(ctx, options) {
   function reset() {
     clearAi()
     state.status = 'idle'
+    // A reset is a fresh table: seats are re-drawn and the difficulty goes back
+    // to its default, so a mid-session experiment with "普通" does not stick.
+    shuffleSeats()
+    state.difficulty = DEFAULT_DIFFICULTY
     state.handNo = 0
     state.gameOver = false
     state.dealer = null
@@ -963,6 +1007,18 @@ export function createTable(ctx, options) {
     afterAction()
     scheduleAi()
     return snapshot(at)
+  }
+
+  // Switching levels is allowed mid-hand: the next decision reads the new
+  // policy and the log records it, so the change is visible at the table. A
+  // reset/restart restores DEFAULT_DIFFICULTY (see start/reset).
+  function setDifficulty(value) {
+    const next = String(value || '')
+    if (!isDifficulty(next)) throw new HttpError(400, 'unknown difficulty: ' + next)
+    if (state.difficulty === next) return snapshot()
+    state.difficulty = next
+    log('难度已切到「' + difficultyLabel(next) + '」')
+    return snapshot()
   }
 
   function setAvatar(args) {
@@ -1064,6 +1120,7 @@ export function createTable(ctx, options) {
     act: act,
     setAvatar: setAvatar,
     clearAvatar: clearAvatar,
+    setDifficulty: setDifficulty,
     avatarFile: avatarFile,
     dispose: dispose,
     // LAN surface
@@ -1789,6 +1846,7 @@ export function apply(ctx) {
           else if (method === 'reset') json(200, withLan(session, session.table.reset()))
           else if (method === 'set-avatar') json(200, withLan(session, session.table.setAvatar(body)))
           else if (method === 'clear-avatar') json(200, withLan(session, session.table.clearAvatar(body)))
+          else if (method === 'difficulty') json(200, withLan(session, session.table.setDifficulty(body.value)))
         } catch (err) {
           discardRequest(req)
           if (res.headersSent) {

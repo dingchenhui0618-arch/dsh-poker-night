@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-27
+
+### 新增
+- AI 难度档位：在牌桌右上角（小窗里是 `AI 老练` 按钮）切换「普通 / 老练」。老练档会把底池赔率算给模型（跟注额 ÷（底池 + 跟注额）），只在赔率被牌力盖过时跟注，并按底池比例做价值下注；没有下注时可以偶尔诈唬抢池，人越多诈得越少。普通档保留原来的手感，随时切得回去。
+- 重开牌桌默认用「老练」：`Start` 和 `Reset` 都会把难度恢复成默认档，想打轻松的一局再手动切回普通。
+- 每次重开（Start / Reset）重新洗座位：7 位智能体在 1~7 号位随机就座，你固定在 0 号位（局域网客人的 `you` 语义依赖它）。洗牌不播种，所以连续重开会看到不同的座位顺序。
+
+### 内部
+- 难度策略抽成纯函数模块 `src/ai-difficulty.js`（`normalChoice` / `sharpChoice`），引擎只负责把牌局状态算成一份快照；`test/ai-difficulty.test.mjs` 与 `test/difficulty.test.mjs` 钉住两档的差异、默认值与座位洗牌。
+- `snapshot` 新增 `difficulty` 与 `difficultyOptions`，切换走 `POST /dsh-poker-night/difficulty`（局域网客人只读，改了会 409）。
+
 ## [0.6.1] - 2026-10-20
 
 ### 内部
@@ -105,7 +116,8 @@
 
 - 首次发布：六人无限注德州扑克插件，host 引擎 + client Tab。0.1.1 至 0.1.3 为发布当天的打包修补。
 
-[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dingchenhui0618-arch/dsh-poker-night/compare/v0.4.0...v0.5.0

@@ -13,6 +13,14 @@ module.exports = `
 .hk-chipbtn.go{background:var(--hk-primary-bg);border-color:var(--hk-primary-bg);color:var(--hk-primary-fg);padding:5px 14px;font-weight:650}
 .hk-chipbtn.go:hover{background:var(--hk-primary-hover)}
 .hk-chipbtn:disabled{opacity:.35;cursor:default}
+/* AI difficulty: a two-stop segment, sitting next to Start/Reset. The mini
+   window has no room for it and uses .hk-diff-chip instead. */
+.hk-diff{flex:none;display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--hk-line);background:var(--hk-surface);border-radius:999px}
+.hk-diff-opt{cursor:pointer;border:0;background:transparent;color:var(--hk-text-dim);border-radius:999px;padding:3px 10px;font-size:11px;line-height:1.55;font-family:inherit}
+.hk-diff-opt:hover{color:var(--hk-text-2)}
+.hk-diff-opt.on{background:var(--hk-subtle);color:var(--hk-text);font-weight:650}
+.hk-diff-opt:disabled{opacity:.35;cursor:default}
+.hk-mini .hk-diff{display:none}
 .hk-body{flex:1;min-height:0;display:flex;overflow:hidden}
 .hk-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:88px 112px 56px;container-type:size;overflow:visible}
 .hk-play{display:flex;flex-direction:column;align-items:center;justify-content:center;width:min(1080px,100%,calc(100cqh * 2.15));max-width:100%;height:100%;min-height:0;padding:0;overflow:visible}
